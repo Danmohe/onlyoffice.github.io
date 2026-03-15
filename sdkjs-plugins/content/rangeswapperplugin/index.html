@@ -245,6 +245,19 @@
         opacity: 0.35;
         cursor: default;
       }
+      .range-input {
+        display: none;
+        width: 100%;
+        padding: 7px 9px;
+        border: 1px solid #2b579a;
+        border-radius: 4px;
+        font-size: 13px;
+        font-family: monospace;
+        outline: none;
+      }
+      .slot-card.capturing .range-input.web-mode {
+        display: block;
+      }
     </style>
   </head>
   <body>
@@ -263,6 +276,12 @@
           <div class="hint">
             Select cells in the sheet, then click Confirm ✓
           </div>
+          <input
+            type="text"
+            class="range-input"
+            id="rangeInputA"
+            placeholder="Type range, e.g. A1:C5"
+          />
           <div class="slot-actions">
             <button
               class="btn btn-set"
@@ -295,6 +314,12 @@
           <div class="hint">
             Select cells in the sheet, then click Confirm ✓
           </div>
+          <input
+            type="text"
+            class="range-input"
+            id="rangeInputB"
+            placeholder="Type range, e.g. A1:C5"
+          />
           <div class="slot-actions">
             <button
               class="btn btn-set"
@@ -345,20 +370,15 @@
         window.Asc.plugin.button = function () {};
       })(window);
 
-      // ── Cross-platform async helper ────────────────────────────────────
-      // Desktop / newer Document Server → callCommandAsync (Promise-based)
-      // Web / older Document Server     → callCommand + onCommandCallback
-      function callAsync(fn) {
-        if (typeof Asc.plugin.callCommandAsync === "function") {
-          return Asc.plugin.callCommandAsync(fn);
-        }
-        return new Promise(function (resolve) {
-          Asc.plugin.onCommandCallback = function () {
-            Asc.plugin.onCommandCallback = null;
-            resolve(this.info ? this.info.data : null);
-          };
-          Asc.plugin.callCommand(fn, false);
-        });
+      // ── Platform detection ─────────────────────────────────────────────
+      // callCommandAsync exists on Desktop / newer Document Server only.
+      // On web (older Document Server) it is absent — use text-input fallback.
+      var hasAsync = typeof Asc.plugin.callCommandAsync === "function";
+
+      // Mark inputs as web-mode so CSS shows them during capture
+      if (!hasAsync) {
+        document.getElementById("rangeInputA").classList.add("web-mode");
+        document.getElementById("rangeInputB").classList.add("web-mode");
       }
 
       // ── Helpers ────────────────────────────────────────────────────────
@@ -461,48 +481,71 @@
       }
 
       // ── Button handlers ────────────────────────────────────────────────
+      function confirmAddr(slot, addr) {
+        if (!addr) {
+          showStatus("No selection. Try again.", "error");
+          state[slot].capturing = false;
+          updateUI();
+          return;
+        }
+        state[slot].addr = addr;
+        state[slot].capturing = false;
+        var p = parseAddress(addr);
+        state[slot].rows = p.rows;
+        state[slot].cols = p.cols;
+        clearStatus();
+        updateUI();
+      }
+
       function handleSetBtn(slot) {
         var s = state[slot];
         if (s.capturing) {
-          // ── Confirm: use callCommandAsync (returns a Promise with the actual value) ──
-          callAsync(function () {
-            try {
-              var ws = Api.GetActiveSheet();
-              var range = ws.GetSelection();
-              if (!range) return null;
-              return range.GetAddress(false, false, "A1", false);
-            } catch (e) {
-              return "ERR:" + e.message;
-            }
-          })
-            .then(function (result) {
-              if (
-                !result ||
-                (typeof result === "string" && result.indexOf("ERR:") === 0)
-              ) {
-                showStatus(
-                  "Could not read selection" +
-                    (result ? " — " + result.replace("ERR:", "") : "") +
-                    ". Try again.",
-                  "error",
-                );
+          if (hasAsync) {
+            // ── Desktop: read selection from the editor ──
+            Asc.plugin
+              .callCommandAsync(function () {
+                try {
+                  var ws = Api.GetActiveSheet();
+                  var range = ws.GetSelection();
+                  if (!range) return null;
+                  return range.GetAddress(false, false, "A1", false);
+                } catch (e) {
+                  return "ERR:" + e.message;
+                }
+              })
+              .then(function (result) {
+                if (
+                  !result ||
+                  (typeof result === "string" && result.indexOf("ERR:") === 0)
+                ) {
+                  showStatus(
+                    "Could not read selection" +
+                      (result ? ": " + result.replace("ERR:", "") : "") +
+                      ". Try again.",
+                    "error",
+                  );
+                  state[slot].capturing = false;
+                  updateUI();
+                  return;
+                }
+                confirmAddr(slot, result);
+              })
+              .catch(function (e) {
+                showStatus("Error: " + e.message, "error");
                 state[slot].capturing = false;
                 updateUI();
-                return;
-              }
-              state[slot].addr = result;
-              state[slot].capturing = false;
-              var p = parseAddress(result);
-              state[slot].rows = p.rows;
-              state[slot].cols = p.cols;
-              clearStatus();
-              updateUI();
-            })
-            .catch(function (e) {
-              showStatus("Error reading selection: " + e.message, "error");
-              state[slot].capturing = false;
-              updateUI();
-            });
+              });
+          } else {
+            // ── Web: read from text input ──
+            var input = document.getElementById("rangeInput" + slot);
+            var val = input ? input.value.trim().toUpperCase() : "";
+            if (!val || !/^[A-Z]+\d+(:[A-Z]+\d+)?$/.test(val)) {
+              showStatus("Enter a valid range, e.g. A1:C5 or A1", "error");
+              return;
+            }
+            confirmAddr(slot, val);
+            input.value = "";
+          }
         } else {
           var other = slot === "A" ? "B" : "A";
           if (state[other].capturing) {
