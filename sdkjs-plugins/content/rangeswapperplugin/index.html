@@ -364,22 +364,42 @@
         B: { addr: null, rows: 0, cols: 0, capturing: false },
       };
 
-      // ── Plugin lifecycle ───────────────────────────────────────────────
-      (function (window) {
-        window.Asc.plugin.init = function () {};
-        window.Asc.plugin.button = function () {};
-      })(window);
-
       // ── Platform detection ─────────────────────────────────────────────
-      // callCommandAsync exists on Desktop / newer Document Server only.
-      // On web (older Document Server) it is absent — use text-input fallback.
-      var hasAsync = typeof Asc.plugin.callCommandAsync === "function";
+      // callCommandAsync exists on web too, but returns the command string,
+      // not the actual value. We probe at init time to find out which.
+      var hasWorkingAsync = false;
 
-      // Mark inputs as web-mode so CSS shows them during capture
-      if (!hasAsync) {
+      function setWebMode() {
         document.getElementById("rangeInputA").classList.add("web-mode");
         document.getElementById("rangeInputB").classList.add("web-mode");
       }
+
+      // ── Plugin lifecycle ───────────────────────────────────────────────
+      (function (window) {
+        window.Asc.plugin.init = function () {
+          // Probe: if callCommandAsync returns the actual value (not code string),
+          // we're on Desktop / a version that supports it properly.
+          if (typeof Asc.plugin.callCommandAsync === "function") {
+            Asc.plugin
+              .callCommandAsync(function () {
+                return "PROBE_OK";
+              })
+              .then(function (result) {
+                if (result === "PROBE_OK") {
+                  hasWorkingAsync = true;
+                } else {
+                  setWebMode();
+                }
+              })
+              .catch(function () {
+                setWebMode();
+              });
+          } else {
+            setWebMode();
+          }
+        };
+        window.Asc.plugin.button = function () {};
+      })(window);
 
       // ── Helpers ────────────────────────────────────────────────────────
       function parseAddress(addr) {
@@ -500,7 +520,7 @@
       function handleSetBtn(slot) {
         var s = state[slot];
         if (s.capturing) {
-          if (hasAsync) {
+          if (hasWorkingAsync) {
             // ── Desktop: read selection from the editor ──
             Asc.plugin
               .callCommandAsync(function () {
@@ -601,7 +621,6 @@
         var pA = parseAddress(state.A.addr);
         var pB = parseAddress(state.B.addr);
 
-        // Pass everything needed into the editor context via Asc.scope
         Asc.scope.startRowA = pA.rowStart;
         Asc.scope.startColA = pA.colStart;
         Asc.scope.startRowB = pB.rowStart;
@@ -609,10 +628,117 @@
         Asc.scope.rows = pA.rows;
         Asc.scope.cols = pA.cols;
 
-        // Phase 1: read — use ws.GetRange(addr) per cell (GetCell doesn't exist on ApiRange)
-        callAsync(function () {
-          try {
-            // Column number → letter(s), e.g. 3 → "C", 27 → "AA"
+        if (hasWorkingAsync) {
+          // ── Desktop: two-phase (callCommandAsync read → callCommand write) ──
+          Asc.plugin
+            .callCommandAsync(function () {
+              try {
+                function colLetter(n) {
+                  var s = "";
+                  while (n > 0) {
+                    var r = (n - 1) % 26;
+                    s = String.fromCharCode(65 + r) + s;
+                    n = Math.floor((n - 1) / 26);
+                  }
+                  return s;
+                }
+                var ws = Api.GetActiveSheet(),
+                  rows = Asc.scope.rows,
+                  cols = Asc.scope.cols;
+                var sRA = Asc.scope.startRowA,
+                  sCA = Asc.scope.startColA;
+                var sRB = Asc.scope.startRowB,
+                  sCB = Asc.scope.startColB;
+                var dA = [],
+                  dB = [];
+                for (var r = 0; r < rows; r++)
+                  for (var c = 0; c < cols; c++) {
+                    var cA = ws.GetRange(colLetter(sCA + c) + (sRA + r)),
+                      cB = ws.GetRange(colLetter(sCB + c) + (sRB + r));
+                    var fA = cA.GetFormula();
+                    dA.push(fA ? fA : cA.GetValue());
+                    var fB = cB.GetFormula();
+                    dB.push(fB ? fB : cB.GetValue());
+                  }
+                return {
+                  sRA: sRA,
+                  sCA: sCA,
+                  sRB: sRB,
+                  sCB: sCB,
+                  a: dA,
+                  b: dB,
+                  rows: rows,
+                  cols: cols,
+                };
+              } catch (e) {
+                return "ERR:" + e.message;
+              }
+            })
+            .then(function (result) {
+              if (!result || typeof result === "string") {
+                showStatus(
+                  "Read failed" +
+                    (typeof result === "string"
+                      ? ": " + result.replace("ERR:", "")
+                      : "") +
+                    ".",
+                  "error",
+                );
+                return;
+              }
+              Asc.scope.sRA = result.sRA;
+              Asc.scope.sCA = result.sCA;
+              Asc.scope.sRB = result.sRB;
+              Asc.scope.sCB = result.sCB;
+              Asc.scope.dataA = result.a;
+              Asc.scope.dataB = result.b;
+              Asc.scope.rows = result.rows;
+              Asc.scope.cols = result.cols;
+              Asc.plugin.callCommand(function () {
+                function colLetter(n) {
+                  var s = "";
+                  while (n > 0) {
+                    var r = (n - 1) % 26;
+                    s = String.fromCharCode(65 + r) + s;
+                    n = Math.floor((n - 1) / 26);
+                  }
+                  return s;
+                }
+                var ws = Api.GetActiveSheet(),
+                  rows = Asc.scope.rows,
+                  cols = Asc.scope.cols;
+                var dA = Asc.scope.dataA,
+                  dB = Asc.scope.dataB,
+                  i = 0;
+                for (var r = 0; r < rows; r++)
+                  for (var c = 0; c < cols; c++) {
+                    var cellA = ws.GetRange(
+                      colLetter(Asc.scope.sCA + c) + (Asc.scope.sRA + r),
+                    );
+                    var cellB = ws.GetRange(
+                      colLetter(Asc.scope.sCB + c) + (Asc.scope.sRB + r),
+                    );
+                    if (typeof dB[i] === "string" && dB[i].charAt(0) === "=") {
+                      cellA.SetFormula(dB[i]);
+                    } else {
+                      cellA.SetValue(dB[i]);
+                    }
+                    if (typeof dA[i] === "string" && dA[i].charAt(0) === "=") {
+                      cellB.SetFormula(dA[i]);
+                    } else {
+                      cellB.SetValue(dA[i]);
+                    }
+                    i++;
+                  }
+              }, false);
+              showStatus("✓ Ranges swapped successfully.", "success");
+            })
+            .catch(function (e) {
+              showStatus("Swap failed: " + e.message, "error");
+            });
+        } else {
+          // ── Web: single callCommand — read AND write in one shot, no return needed ──
+          Asc.plugin.callCommand(function () {
             function colLetter(n) {
               var s = "";
               while (n > 0) {
@@ -622,106 +748,46 @@
               }
               return s;
             }
-            var ws = Api.GetActiveSheet();
-            var rows = Asc.scope.rows,
+            var ws = Api.GetActiveSheet(),
+              rows = Asc.scope.rows,
               cols = Asc.scope.cols;
             var sRA = Asc.scope.startRowA,
               sCA = Asc.scope.startColA;
             var sRB = Asc.scope.startRowB,
               sCB = Asc.scope.startColB;
+            // Read both ranges
             var dA = [],
               dB = [];
-            for (var r = 0; r < rows; r++) {
+            for (var r = 0; r < rows; r++)
               for (var c = 0; c < cols; c++) {
-                var cA = ws.GetRange(colLetter(sCA + c) + (sRA + r));
-                var cB = ws.GetRange(colLetter(sCB + c) + (sRB + r));
+                var cA = ws.GetRange(colLetter(sCA + c) + (sRA + r)),
+                  cB = ws.GetRange(colLetter(sCB + c) + (sRB + r));
                 var fA = cA.GetFormula();
                 dA.push(fA ? fA : cA.GetValue());
                 var fB = cB.GetFormula();
                 dB.push(fB ? fB : cB.GetValue());
               }
-            }
-            return {
-              sRA: sRA,
-              sCA: sCA,
-              sRB: sRB,
-              sCB: sCB,
-              a: dA,
-              b: dB,
-              rows: rows,
-              cols: cols,
-            };
-          } catch (e) {
-            return "ERR:" + e.message;
-          }
-        })
-          .then(function (result) {
-            if (!result || typeof result === "string") {
-              showStatus(
-                "Read failed" +
-                  (typeof result === "string"
-                    ? ": " + result.replace("ERR:", "")
-                    : "") +
-                  ".",
-                "error",
-              );
-              return;
-            }
-
-            // Phase 2: write — same address construction approach
-            Asc.scope.sRA = result.sRA;
-            Asc.scope.sCA = result.sCA;
-            Asc.scope.sRB = result.sRB;
-            Asc.scope.sCB = result.sCB;
-            Asc.scope.dataA = result.a;
-            Asc.scope.dataB = result.b;
-            Asc.scope.rows = result.rows;
-            Asc.scope.cols = result.cols;
-
-            Asc.plugin.callCommand(function () {
-              function colLetter(n) {
-                var s = "";
-                while (n > 0) {
-                  var r = (n - 1) % 26;
-                  s = String.fromCharCode(65 + r) + s;
-                  n = Math.floor((n - 1) / 26);
+            // Write swapped values
+            var i = 0;
+            for (var r = 0; r < rows; r++)
+              for (var c = 0; c < cols; c++) {
+                var cellA = ws.GetRange(colLetter(sCA + c) + (sRA + r));
+                var cellB = ws.GetRange(colLetter(sCB + c) + (sRB + r));
+                if (typeof dB[i] === "string" && dB[i].charAt(0) === "=") {
+                  cellA.SetFormula(dB[i]);
+                } else {
+                  cellA.SetValue(dB[i]);
                 }
-                return s;
-              }
-              var ws = Api.GetActiveSheet();
-              var rows = Asc.scope.rows,
-                cols = Asc.scope.cols;
-              var dA = Asc.scope.dataA,
-                dB = Asc.scope.dataB;
-              var i = 0;
-              for (var r = 0; r < rows; r++) {
-                for (var c = 0; c < cols; c++) {
-                  var cellA = ws.GetRange(
-                    colLetter(Asc.scope.sCA + c) + (Asc.scope.sRA + r),
-                  );
-                  var cellB = ws.GetRange(
-                    colLetter(Asc.scope.sCB + c) + (Asc.scope.sRB + r),
-                  );
-                  if (typeof dB[i] === "string" && dB[i].charAt(0) === "=") {
-                    cellA.SetFormula(dB[i]);
-                  } else {
-                    cellA.SetValue(dB[i]);
-                  }
-                  if (typeof dA[i] === "string" && dA[i].charAt(0) === "=") {
-                    cellB.SetFormula(dA[i]);
-                  } else {
-                    cellB.SetValue(dA[i]);
-                  }
-                  i++;
+                if (typeof dA[i] === "string" && dA[i].charAt(0) === "=") {
+                  cellB.SetFormula(dA[i]);
+                } else {
+                  cellB.SetValue(dA[i]);
                 }
+                i++;
               }
-            }, false);
-
-            showStatus("✓ Ranges swapped successfully.", "success");
-          })
-          .catch(function (e) {
-            showStatus("Swap failed: " + e.message, "error");
-          });
+          }, false);
+          showStatus("✓ Ranges swapped successfully.", "success");
+        }
       }
 
       updateUI();
