@@ -345,6 +345,22 @@
         window.Asc.plugin.button = function () {};
       })(window);
 
+      // ── Cross-platform async helper ────────────────────────────────────
+      // Desktop / newer Document Server → callCommandAsync (Promise-based)
+      // Web / older Document Server     → callCommand + onCommandCallback
+      function callAsync(fn) {
+        if (typeof Asc.plugin.callCommandAsync === "function") {
+          return Asc.plugin.callCommandAsync(fn);
+        }
+        return new Promise(function (resolve) {
+          Asc.plugin.onCommandCallback = function () {
+            Asc.plugin.onCommandCallback = null;
+            resolve(this.info ? this.info.data : null);
+          };
+          Asc.plugin.callCommand(fn, false);
+        });
+      }
+
       // ── Helpers ────────────────────────────────────────────────────────
       function parseAddress(addr) {
         var clean = addr.replace(/^[^!]+!/, "").replace(/\$/g, "");
@@ -449,17 +465,16 @@
         var s = state[slot];
         if (s.capturing) {
           // ── Confirm: use callCommandAsync (returns a Promise with the actual value) ──
-          Asc.plugin
-            .callCommandAsync(function () {
-              try {
-                var ws = Api.GetActiveSheet();
-                var range = ws.GetSelection();
-                if (!range) return null;
-                return range.GetAddress(false, false, "A1", false);
-              } catch (e) {
-                return "ERR:" + e.message;
-              }
-            })
+          callAsync(function () {
+            try {
+              var ws = Api.GetActiveSheet();
+              var range = ws.GetSelection();
+              if (!range) return null;
+              return range.GetAddress(false, false, "A1", false);
+            } catch (e) {
+              return "ERR:" + e.message;
+            }
+          })
             .then(function (result) {
               if (
                 !result ||
@@ -552,52 +567,51 @@
         Asc.scope.cols = pA.cols;
 
         // Phase 1: read — use ws.GetRange(addr) per cell (GetCell doesn't exist on ApiRange)
-        Asc.plugin
-          .callCommandAsync(function () {
-            try {
-              // Column number → letter(s), e.g. 3 → "C", 27 → "AA"
-              function colLetter(n) {
-                var s = "";
-                while (n > 0) {
-                  var r = (n - 1) % 26;
-                  s = String.fromCharCode(65 + r) + s;
-                  n = Math.floor((n - 1) / 26);
-                }
-                return s;
+        callAsync(function () {
+          try {
+            // Column number → letter(s), e.g. 3 → "C", 27 → "AA"
+            function colLetter(n) {
+              var s = "";
+              while (n > 0) {
+                var r = (n - 1) % 26;
+                s = String.fromCharCode(65 + r) + s;
+                n = Math.floor((n - 1) / 26);
               }
-              var ws = Api.GetActiveSheet();
-              var rows = Asc.scope.rows,
-                cols = Asc.scope.cols;
-              var sRA = Asc.scope.startRowA,
-                sCA = Asc.scope.startColA;
-              var sRB = Asc.scope.startRowB,
-                sCB = Asc.scope.startColB;
-              var dA = [],
-                dB = [];
-              for (var r = 0; r < rows; r++) {
-                for (var c = 0; c < cols; c++) {
-                  var cA = ws.GetRange(colLetter(sCA + c) + (sRA + r));
-                  var cB = ws.GetRange(colLetter(sCB + c) + (sRB + r));
-                  var fA = cA.GetFormula();
-                  dA.push(fA ? fA : cA.GetValue());
-                  var fB = cB.GetFormula();
-                  dB.push(fB ? fB : cB.GetValue());
-                }
-              }
-              return {
-                sRA: sRA,
-                sCA: sCA,
-                sRB: sRB,
-                sCB: sCB,
-                a: dA,
-                b: dB,
-                rows: rows,
-                cols: cols,
-              };
-            } catch (e) {
-              return "ERR:" + e.message;
+              return s;
             }
-          })
+            var ws = Api.GetActiveSheet();
+            var rows = Asc.scope.rows,
+              cols = Asc.scope.cols;
+            var sRA = Asc.scope.startRowA,
+              sCA = Asc.scope.startColA;
+            var sRB = Asc.scope.startRowB,
+              sCB = Asc.scope.startColB;
+            var dA = [],
+              dB = [];
+            for (var r = 0; r < rows; r++) {
+              for (var c = 0; c < cols; c++) {
+                var cA = ws.GetRange(colLetter(sCA + c) + (sRA + r));
+                var cB = ws.GetRange(colLetter(sCB + c) + (sRB + r));
+                var fA = cA.GetFormula();
+                dA.push(fA ? fA : cA.GetValue());
+                var fB = cB.GetFormula();
+                dB.push(fB ? fB : cB.GetValue());
+              }
+            }
+            return {
+              sRA: sRA,
+              sCA: sCA,
+              sRB: sRB,
+              sCB: sCB,
+              a: dA,
+              b: dB,
+              rows: rows,
+              cols: cols,
+            };
+          } catch (e) {
+            return "ERR:" + e.message;
+          }
+        })
           .then(function (result) {
             if (!result || typeof result === "string") {
               showStatus(
