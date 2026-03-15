@@ -1,6 +1,7 @@
 {
   "name": "Range Swapper",
   "guid": "asc.{f8f4a3b2-1c2d-4e5f-a6b7-c8d9e0f1a2b3}",
+  "baseUrl": "https://danmohe.github.io/onlyoffice.github.io/store/rangeswapper/",
   "version": "1.0.0",
   "minVersion": "7.0.0",
   "variations": [
