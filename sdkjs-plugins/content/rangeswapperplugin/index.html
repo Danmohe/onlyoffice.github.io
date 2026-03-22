@@ -348,7 +348,11 @@
       (function (window) {
         window.Asc.plugin.init = function () {
         };
-        window.Asc.plugin.button = function () {};
+        window.Asc.plugin.button = function (id) {
+          if (id === -1) {
+            this.executeCommand("close", "");
+          }
+        };
       })(window);
 
       // ── Helpers ────────────────────────────────────────────────────────
