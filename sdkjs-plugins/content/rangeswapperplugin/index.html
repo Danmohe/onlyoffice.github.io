@@ -513,15 +513,13 @@
         if (!sA.addr || !sB.addr) return;
         clearStatus();
         document.getElementById("overlapPrompt").classList.remove("visible");
-        var cA = cellCount(sA.addr),
-          cB = cellCount(sB.addr);
-        if (cA !== cB) {
+        var pA = parseAddress(state.A.addr);
+        var pB = parseAddress(state.B.addr);
+        if (pA.rows !== pB.rows || pA.cols !== pB.cols) {
           showStatus(
-            "Ranges must be the same size. A: " +
-              cA +
-              " cell(s), B: " +
-              cB +
-              " cell(s).",
+            "Both ranges must have the exact same dimensions. Range A is " +
+              pA.rows + "x" + pA.cols + ", Range B is " +
+              pB.rows + "x" + pB.cols + ".",
             "error",
           );
           return;
@@ -570,15 +568,27 @@
               sCB = Asc.scope.startColB;
             var dA = [],
               dB = [];
-            for (var r = 0; r < rows; r++)
+            for (var r = 0; r < rows; r++) {
               for (var c = 0; c < cols; c++) {
                 var cA = ws.GetRange(colLetter(sCA + c) + (sRA + r)),
                   cB = ws.GetRange(colLetter(sCB + c) + (sRB + r));
-                var fA = cA.GetFormula();
-                dA.push(fA ? fA : cA.GetValue());
-                var fB = cB.GetFormula();
-                dB.push(fB ? fB : cB.GetValue());
+                var fA = cA.GetFormula(), fB = cB.GetFormula();
+                
+                if (fA && fA !== "null") {
+                  dA.push(fA);
+                } else {
+                  var vA = cA.GetValue();
+                  dA.push(vA === null || vA === undefined ? "" : vA);
+                }
+
+                if (fB && fB !== "null") {
+                  dB.push(fB);
+                } else {
+                  var vB = cB.GetValue();
+                  dB.push(vB === null || vB === undefined ? "" : vB);
+                }
               }
+            }
             return JSON.stringify({
               sRA: sRA,
               sCA: sCA,
@@ -607,39 +617,62 @@
           Asc.scope.rows = result.rows;
           Asc.scope.cols = result.cols;
           Asc.plugin.callCommand(function () {
-            function colLetter(n) {
-              var s = "";
-              while (n > 0) {
-                var r = (n - 1) % 26;
-                s = String.fromCharCode(65 + r) + s;
-                n = Math.floor((n - 1) / 26);
+            try {
+              function colLetter(n) {
+                var s = "";
+                while (n > 0) {
+                  var r = (n - 1) % 26;
+                  s = String.fromCharCode(65 + r) + s;
+                  n = Math.floor((n - 1) / 26);
+                }
+                return s;
               }
-              return s;
+              var ws = Api.GetActiveSheet(),
+                rows = Asc.scope.rows,
+                cols = Asc.scope.cols;
+              var dA = Asc.scope.dataA,
+                dB = Asc.scope.dataB,
+                i = 0;
+              for (var r = 0; r < rows; r++) {
+                for (var c = 0; c < cols; c++) {
+                  var cellA = ws.GetRange(colLetter(Asc.scope.sCA + c) + (Asc.scope.sRA + r));
+                  var cellB = ws.GetRange(colLetter(Asc.scope.sCB + c) + (Asc.scope.sRB + r));
+                  
+                  var valB = dB[i];
+                  try {
+                    if (typeof valB === "string" && valB.charAt(0) === "=") {
+                      cellA.SetFormula(valB);
+                    } else if (valB === null || valB === undefined || valB === "") {
+                      cellA.SetValue("");
+                    } else {
+                      cellA.SetValue(valB);
+                    }
+                  } catch (e1) { /* ignore single cell errors */ }
+
+                  var valA = dA[i];
+                  try {
+                    if (typeof valA === "string" && valA.charAt(0) === "=") {
+                      cellB.SetFormula(valA);
+                    } else if (valA === null || valA === undefined || valA === "") {
+                      cellB.SetValue("");
+                    } else {
+                      cellB.SetValue(valA);
+                    }
+                  } catch (e2) { /* ignore single cell errors */ }
+                  
+                  i++;
+                }
+              }
+              return "OK";
+            } catch (e) {
+              return "ERR:" + e.message;
             }
-            var ws = Api.GetActiveSheet(),
-              rows = Asc.scope.rows,
-              cols = Asc.scope.cols;
-            var dA = Asc.scope.dataA,
-              dB = Asc.scope.dataB,
-              i = 0;
-            for (var r = 0; r < rows; r++)
-              for (var c = 0; c < cols; c++) {
-                var cellA = ws.GetRange(colLetter(Asc.scope.sCA + c) + (Asc.scope.sRA + r));
-                var cellB = ws.GetRange(colLetter(Asc.scope.sCB + c) + (Asc.scope.sRB + r));
-                if (typeof dB[i] === "string" && dB[i].charAt(0) === "=") {
-                  cellA.SetFormula(dB[i]);
-                } else {
-                  cellA.SetValue(dB[i]);
-                }
-                if (typeof dA[i] === "string" && dA[i].charAt(0) === "=") {
-                  cellB.SetFormula(dA[i]);
-                } else {
-                  cellB.SetValue(dA[i]);
-                }
-                i++;
-              }
-          }, false, true, function() {
-            showStatus("✓ Ranges swapped successfully.", "success");
+          }, false, true, function(writeRes) {
+            if (writeRes && writeRes.indexOf("ERR:") === 0) {
+              showStatus("Swap encountered an error: " + writeRes.replace("ERR:", ""), "error");
+            } else {
+              showStatus("✓ Ranges swapped successfully.", "success");
+            }
           });
         });
       }
