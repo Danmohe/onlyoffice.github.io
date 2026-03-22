@@ -553,39 +553,42 @@
             function colLetter(n) {
               var s = "";
               while (n > 0) {
-                var r = (n - 1) % 26;
-                s = String.fromCharCode(65 + r) + s;
+                var rem = (n - 1) % 26;
+                s = String.fromCharCode(65 + rem) + s;
                 n = Math.floor((n - 1) / 26);
               }
               return s;
             }
-            var ws = Api.GetActiveSheet(),
-              rows = Asc.scope.rows,
-              cols = Asc.scope.cols;
-            var sRA = Asc.scope.startRowA,
-              sCA = Asc.scope.startColA;
-            var sRB = Asc.scope.startRowB,
-              sCB = Asc.scope.startColB;
+            var ws = Api.GetActiveSheet();
+            var rows = Number(Asc.scope.rows),
+              cols = Number(Asc.scope.cols);
+            var sRA = Number(Asc.scope.startRowA),
+              sCA = Number(Asc.scope.startColA);
+            var sRB = Number(Asc.scope.startRowB),
+              sCB = Number(Asc.scope.startColB);
             var dA = [],
               dB = [];
-            for (var r = 0; r < rows; r++) {
-              for (var c = 0; c < cols; c++) {
-                var cA = ws.GetRange(colLetter(sCA + c) + (sRA + r)),
-                  cB = ws.GetRange(colLetter(sCB + c) + (sRB + r));
-                var fA = cA.GetFormula(), fB = cB.GetFormula();
-                
-                if (fA && fA !== "null") {
-                  dA.push(fA);
-                } else {
-                  var vA = cA.GetValue();
-                  dA.push(vA === null || vA === undefined ? "" : vA);
-                }
+            for (var rowIdx = 0; rowIdx < rows; rowIdx++) {
+              for (var colIdx = 0; colIdx < cols; colIdx++) {
+                try {
+                  var cA = ws.GetRange(colLetter(sCA + colIdx) + (sRA + rowIdx)),
+                    cB = ws.GetRange(colLetter(sCB + colIdx) + (sRB + rowIdx));
+                  var fA = cA.GetFormula(), fB = cB.GetFormula();
+                  
+                  if (fA && fA !== "null") dA.push(fA);
+                  else {
+                    var vA = cA.GetValue();
+                    dA.push(vA === null || vA === undefined ? "" : vA);
+                  }
 
-                if (fB && fB !== "null") {
-                  dB.push(fB);
-                } else {
-                  var vB = cB.GetValue();
-                  dB.push(vB === null || vB === undefined ? "" : vB);
+                  if (fB && fB !== "null") dB.push(fB);
+                  else {
+                    var vB = cB.GetValue();
+                    dB.push(vB === null || vB === undefined ? "" : vB);
+                  }
+                } catch (readErr) {
+                  dA.push("");
+                  dB.push("");
                 }
               }
             }
@@ -621,22 +624,26 @@
               function colLetter(n) {
                 var s = "";
                 while (n > 0) {
-                  var r = (n - 1) % 26;
-                  s = String.fromCharCode(65 + r) + s;
+                  var rem = (n - 1) % 26;
+                  s = String.fromCharCode(65 + rem) + s;
                   n = Math.floor((n - 1) / 26);
                 }
                 return s;
               }
-              var ws = Api.GetActiveSheet(),
-                rows = Asc.scope.rows,
-                cols = Asc.scope.cols;
+              var ws = Api.GetActiveSheet();
+              var rows = Number(Asc.scope.rows),
+                cols = Number(Asc.scope.cols);
+              var sRA = Number(Asc.scope.sRA),
+                sCA = Number(Asc.scope.sCA);
+              var sRB = Number(Asc.scope.sRB),
+                sCB = Number(Asc.scope.sCB);
               var dA = Asc.scope.dataA,
                 dB = Asc.scope.dataB,
                 i = 0;
-              for (var r = 0; r < rows; r++) {
-                for (var c = 0; c < cols; c++) {
-                  var cellA = ws.GetRange(colLetter(Asc.scope.sCA + c) + (Asc.scope.sRA + r));
-                  var cellB = ws.GetRange(colLetter(Asc.scope.sCB + c) + (Asc.scope.sRB + r));
+              for (var rowIdx = 0; rowIdx < rows; rowIdx++) {
+                for (var colIdx = 0; colIdx < cols; colIdx++) {
+                  var cellA = ws.GetRange(colLetter(sCA + colIdx) + (sRA + rowIdx));
+                  var cellB = ws.GetRange(colLetter(sCB + colIdx) + (sRB + rowIdx));
                   
                   var valB = dB[i];
                   try {
